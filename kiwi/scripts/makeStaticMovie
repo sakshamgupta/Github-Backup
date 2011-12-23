@@ -1,0 +1,8 @@
+# !/bin/bash
+
+for (( i = 0 ; i < 30 ; i++ ))
+do
+currentFileName=`printf "static%02d.png" $i`
+	cp $1 $currentFileName
+done
+

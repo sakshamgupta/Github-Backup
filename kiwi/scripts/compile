@@ -1,0 +1,35 @@
+#!/bin/bash
+
+COMPILE_STRING=
+OFFSET=0
+STATIC_DURATION=0
+
+CURR_DURATION=`ffmpeg -i static.avi 2>&1 | grep Duration`
+SUBSTRING=`echo $CURR_DURATION| cut -d' ' -f 2 | cut -d',' -f 1|cut -d ':' -f 3 `
+STATIC_DURATION=`echo "$SUBSTRING * 1000" | bc`
+
+SOUND_DIRECTORY="sounds"
+
+mkdir $SOUND_DIRECTORY
+
+for f in *.mov.avi
+do
+    CURR_DURATION=`ffmpeg -i $f 2>&1 | grep Duration`
+	SUBSTRING=`echo $CURR_DURATION| cut -d' ' -f 2 | cut -d',' -f 1|cut -d ':' -f 3 `
+	DURATION=`echo "$SUBSTRING * 1000" | bc`
+	echo -e "$f \t\t$OFFSET \t\t$DURATION" >> info
+
+	OFFSET=`echo "$OFFSET + $STATIC_DURATION + $DURATION" | bc`
+
+	COMPILE_STRING=$COMPILE_STRING" "$f" static.avi"
+
+	ffmpeg -i $f -vn -acodec pcm_s16le -ar 44100 $SOUND_DIRECTORY/$f.wav
+done
+
+cat $COMPILE_STRING > inter.avi
+
+mencoder -forceidx -oac copy -ovc copy inter.avi -o final.avi
+
+ffmpeg -i final.avi -i final.wav -sameq final.mp4
+
+rm inter.avi final.avi

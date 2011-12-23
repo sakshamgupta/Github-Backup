@@ -1,0 +1,166 @@
+#!/bin/bash
+
+#################################################
+################## Show Help  ###################
+#################################################
+USAGE="Usage: `basename $0` [-h] [-r resolution]"
+
+if [ $# -lt 1 ]; then
+	echo -e $USAGE >&2
+	exit 1
+fi  
+
+# Parse command line options.
+while getopts hr: OPT; do
+    case "$OPT" in
+	h)
+	    echo -e $USAGE
+	    exit 0
+	    ;;
+	r)
+	    RESOLUTION=$OPTARG
+	    ;;
+	\?)
+	    # getopts issues an error message
+	    echo -e $USAGE >&2
+	    exit 1
+	    ;;
+    esac
+done
+
+# Remove the switches we parsed above.
+shift `expr $OPTIND - 1`
+
+# We want at least one non-option argument.
+# Remove this block if you don't need it.
+#if [ $# -eq 0 ]; then
+#    echo -e $USAGE >&2
+#    exit 1
+#fi
+
+# Access additional arguments as usual through
+# variables $@, $*, $1, $2, etc. or using this loop:
+for PARAM; do
+    echo -e $PARAM
+done
+
+echo -e 'Starting compilation resolution: '$RESOLUTION' px'
+
+WORKING_DIRECTORY='workingSet/'
+TEMP_DIRECTORY='temp/'
+CURRENT_DIRECTORY=`pwd`
+
+#################################################
+###### Compress Videos and extract audio ########
+#################################################
+echo -e '\nCreating Directory '$WORKING_DIRECTORY
+
+rm -rf $WORKING_DIRECTORY
+mkdir $WORKING_DIRECTORY
+
+echo -e '\nDownsampling videos...'
+for f in *.mov
+do
+	NEW_FILE_LOCATION=$WORKING_DIRECTORY''$f.avi 
+	echo -e 'Converting '$f' to '$NEW_FILE_LOCATION
+	ffmpeg -i $f -s $RESOLUTION -sameq -y $NEW_FILE_LOCATION 2> /dev/null
+done
+echo -e 'Videos Downsampled'
+
+#################################################
+############# Make static movie #################
+#################################################
+echo -e '\nStarting static movie compilation...'
+
+cd $WORKING_DIRECTORY
+STATIC_FILE=$(find . -name \*idle\*.avi)
+
+if ($STATIC_FILE == '')
+then
+	echo -e 'No idle movie file found...'
+	exit 1
+fi
+
+echo -e 'Found idle movie file: '$STATIC_FILE
+
+echo -e 'Making temporary directory for processing...'
+mkdir $TEMP_DIRECTORY
+cp $STATIC_FILE $TEMP_DIRECTORY
+cd $TEMP_DIRECTORY
+
+echo -e 'Dumping Frames...'
+ffmpeg -i $STATIC_FILE -sameq static%03d.png 2> /dev/null
+cp static001.png static.bkup
+rm *.png
+mv static.bkup static.png
+
+for (( i = 0 ; i < 30 ; i++ ))
+do
+	currentFileName=`printf "static%03d.png" $i`
+	cp static.png $currentFileName
+done
+
+echo -e 'Making static movie...'
+ffmpeg -i static%03d.png -i $CURRENT_DIRECTORY'/static.wav' -sameq static.avi 2> /dev/null
+rm *.png
+
+mv static.avi ../
+cd ..
+
+echo -e 'Clearing temporary directory...'
+rm -rf temp/
+echo 'Static video compiled'
+
+################################################
+########### Start final compilation ############
+################################################
+COMPILE_STRING=
+OFFSET=0
+STATIC_DURATION=0
+
+CURR_DURATION=`ffmpeg -i static.avi 2>&1 | grep Duration`
+SUBSTRING=`echo -e $CURR_DURATION| cut -d' ' -f 2 | cut -d',' -f 1|cut -d ':' -f 3 `
+STATIC_DURATION=`echo -e "$SUBSTRING * 1000" | bc`
+
+SOUND_DIRECTORY="sounds"
+TOTAL_FILES=0
+
+echo -e '\nMaking audio file directory...'
+mkdir $SOUND_DIRECTORY
+
+echo -e '\nDumping audio and generating compilation info...'
+for f in *.mov.avi
+do
+	CURR_DURATION=`ffmpeg -i $f 2>&1 | grep Duration`
+	SUBSTRING=`echo -e $CURR_DURATION| cut -d' ' -f 2 | cut -d',' -f 1|cut -d ':' -f 3 `
+	DURATION=`echo -e "$SUBSTRING * 1000" | bc`
+	echo -e -e "$f \t\t$OFFSET \t\t$DURATION" >> info
+
+	OFFSET=`echo -e "$OFFSET + $STATIC_DURATION + $DURATION" | bc`
+
+	COMPILE_STRING=$COMPILE_STRING" "$f" static.avi"
+
+	CURRENT_AUDIO_FILE=$SOUND_DIRECTORY/$f.wav
+	echo -e 'Dumping audio file: '$CURRENT_AUDIO_FILE
+	ffmpeg -i $f -vn -acodec pcm_s16le -ar 44100 $CURRENT_AUDIO_FILE 2> /dev/null
+
+	TOTAL_FILES=`echo $TOTAL_FILES+1 | bc`
+done
+echo -e 'Audio dumped, info file generated'
+
+cat $COMPILE_STRING > inter.avi
+
+echo -e '\nJoining files...'
+mencoder -forceidx -ovc copy -nosound inter.avi -o final.avi 1> /dev/null
+
+echo -e '\nCreating final.wav for editing'
+ffmpeg -i final.avi -vn -acodec pcm_s16le -ar 44100 final.wav 2> /dev/null
+
+echo -e '\nCreating final .mp4...'
+ffmpeg -i final.avi -i $CURRENT_DIRECTORY'/final.wav' -sameq -strict experimental final.mp4 #2> /dev/null
+
+echo -e '\nRemoving intermediate files...'
+rm inter.avi final.avi
+
+echo -e '\nDone!'
+
